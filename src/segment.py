@@ -53,7 +53,7 @@ def dewarp(img, approx):
     hei, wid, _ = img.shape
     pts = approx.reshape((-1, 1, 2))
     cv2.polylines(img, [pts], True, (255, 0, 255), 3)
-    # show_img('before', img)
+    show_img('before', img)
     # dst = np.array([
     #     [0, 0],
     #     [wid - 1, 0],
@@ -71,9 +71,11 @@ def dewarp(img, approx):
     return warp
 
 
-def find_paper(ls_img):
+def find_paper(org_img, ls_img):
     hei, wid = ls_img[0].shape
+    S= hei*wid
     print('hei, wid', hei, wid)
+    found_paper = 0
     paper = np.array([
         [wid - 1, 0],
         [wid - 1, hei - 1],
@@ -84,32 +86,58 @@ def find_paper(ls_img):
     areas = np.empty([0])
     # ls_cnts = []
     ls_rects = []
-    kernel = np.ones((20, 20))
+    kernel = np.ones((25, 25))
+    print('leen', len(ls_img))
+    best_cand = []
     for img in ls_img:
         # img = 255-img
         thresh = cv2.erode(img,  kernel=kernel, iterations=3)
         thresh = 255 - thresh
-        im2, contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        im2, contours, hierarchy = cv2.findContours(thresh, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+        # print('hi,', hierarchy.shape)
+        if hierarchy is not None and len(hierarchy.shape)>2:
+            hierarchy = np.squeeze(hierarchy)
         cl_im = cv2.cvtColor(thresh, cv2.COLOR_GRAY2RGB)
-        for cnt in contours:
+        for i,cnt in enumerate(contours):
             x, y, w, h = cv2.boundingRect(cnt)
             rect = cv2.minAreaRect(cnt)
                    # x,y,w,h = rect[0][0],rect[0][1], rect[1][0],rect[1][1]
             # print('xywh', int(x),int(y),int(w),int(h), wid-5, hei -5)
             area = cv2.contourArea(cnt)
-            if w> wid-5 and h> hei-5: continue
+            print('area', area)
+            # if hierarchy[2]<0: continue
+            # if area/S<0.2: continue
+            # print(hierarchy[i])
+            # k= cv2.isContourConvex(cnt)
+            # if not k:continue
+            if w> wid-5 and h> hei-5:
+                if len(hierarchy.shape)!=1 and hierarchy[i][-2]!=-1: continue
+            if abs((x+w)/2-wid/2)> wid/4 or abs((y+h)/2-hei/2)> hei/4: continue
             # if w * h / (hei * wid) < 0.1: continue
             peri = cv2.arcLength(cnt, True)
             approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
-            # if len(approx)>6: continue
+            if len(approx)>10: continue
+            print('len approx', len(approx))
+            if len(approx)==4 and area> S*0.4 and w> wid*0.7 and h> hei*0.7:
+                found_paper+=1
+                best_cand = approx
             ls_approx.append(approx)
             ls_rects.append([x, y, w, h])
             cv2.polylines(cl_im, [approx], True, (255, 255, 0), 3)
             areas = np.append(areas, area)
             ls_area = np.append(ls_area, w * h)
         show_img('cnt', cl_im)
-    # print('lsr       ect', ls_rects)
-    if len(ls_area)>0:
+    # print('lsrect', ls_rects)
+    print('found paper', found_paper)
+    if found_paper>=1:
+        select = best_cand
+        select = np.squeeze(select)
+        select = mapping(hei, wid, select)
+        # if not check_non_dewarp(org_img,select):
+        paper = select
+        print('found polygon')
+    elif len(ls_area)>0:
+        print('found candidate areas')
         # max_area_id = np.argmax(ls_area)
         max_area_id = np.argmax(areas)
         # max_area_id = np.argmax(ls_circle)
@@ -118,11 +146,21 @@ def find_paper(ls_img):
         # print('select', select, max_area)
         x, y, w, h = ls_rects[max_area_id]
         if w * h / (hei * wid) > 0.4:
-            paper = np.squeeze(select)
-            paper = mapping(hei, wid, paper)
+            select = np.squeeze(select)
+            select = mapping(hei, wid, select)
+            # if not check_non_dewarp(org_img, select):
+            paper = select
             print('found')
     return paper
 
+def check_non_dewarp(img, approx):
+    hei, wid,_ = img.shape
+    tl, tr, br, bl = approx
+    ops = True
+    if np.all(image[:,0:max(tl[0],bl[0])]==255) or np.all(image[:,wid-min(tr[0],br[0]):wid]==255)\
+            or np.all(image[0:max(tl[1],tr[1]),:]==255) or np.all(image[hei-min(bl[1],br[1]):hei,:]==255):
+        ops = False
+    return ops
 
 def mapping(hei, wid, coors):
     print('hei, wid', hei, wid)
@@ -157,15 +195,16 @@ def norm_img(image):
     # cv2.waitKey(0)
     ls_img = []
 
-
+    hei, wid = image.shape[0], image.shape[1]
     for i in range(k):
         result = seg.extractComponent(image, label, i)
         # cv2.imwrite('%s%i.png' % (outdir, i), result)
         # gray = cv2.cvtColor(result, cv2.COLOR_RGB2GRAY)
         gray = cv2.cvtColor(result, cv2.COLOR_RGB2GRAY)
         ret3, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        # thresh = gray
         thresh = 255-thresh
-
+        # if np.average(thresh[hei//2-10:hei//2+10,wid//2-10:wid//2+10])==255: continue
         # show_img('thre', thresh)
         ls_img.append(thresh)
     # ret, thresh = cv2.threshold(gray, 120, 255, 0)
@@ -178,7 +217,7 @@ def norm_img(image):
         # cv2.imshow("extracted",result)
         # cv2.waitKey(0)
     # show_img('gray', gray )
-    paper = find_paper(ls_img)
+    paper = find_paper(image,ls_img)
     print('paper', paper, paper.shape)
     warp = dewarp(image, paper)
     return warp
@@ -198,9 +237,9 @@ if __name__ == "__main__":
     outdir = '%s/dw/' % dir
     if not os.path.exists(outdir):
         os.makedirs(outdir)
-    # file = '009.png'
     files = glob.glob('%s/*.jpg'%dir)+glob.glob('%s/*.png'%dir)
-    files = ['%s/029.png' % dir]
+    files = ['%s/013.png' % dir]
+    # files = ['%s/001.jpg' % dir]
     for filename in files:
         # filename = '%s%s' % (dir, file)
         file = filename.split('/')[-1]
